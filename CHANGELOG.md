@@ -3,6 +3,32 @@
 All notable changes to this project are documented in this file. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Security
+
+- **sundog requires hickory-resolver 0.26.4.** `DnsSrv` discovery reaches two
+  hickory 0.26.1 flaws: a DNS answer reserves room for every record its
+  header claims, up to 65,535 per section, before the parse fails
+  (RUSTSEC-2026-0491), and one spoofed malformed UDP datagram from the name
+  server's address fails the lookup (RUSTSEC-2026-0517). The floor also
+  carries the fixes for a crafted TSIG record that panics a build with
+  overflow checks (RUSTSEC-2026-0488) and for a name server that answers
+  every query truncated, which keeps the resolver retrying until the
+  lookup's deadline (RUSTSEC-2026-0513).
+- **The `tls` feature requires rustls 0.23.46.** rustls 0.23.43 accepts TLS
+  1.3 handshake messages across encryption levels (RUSTSEC-2026-0285), and
+  its client keeps a key-exchange hint from an unauthenticated ServerHello,
+  which lets an on-path attacker steer a later connection to a peer that is
+  not rustls off the post-quantum group (RUSTSEC-2026-0349).
+
+### Changed
+
+- **postcard builds without its default `heapless-cas` feature.** sundog
+  calls only postcard's std and alloc paths, so heapless 0.7 and
+  atomic-polyfill leave the dependency tree, along with their RustSec
+  warnings.
+
 ## [0.6.12] – 2026-11-12
 
 ### Changed
