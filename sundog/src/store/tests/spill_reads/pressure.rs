@@ -1444,9 +1444,10 @@ async fn a_present_key_never_reads_as_a_miss_when_a_read_races_its_promotion() {
         .find(|k| shard.get_sync(k).is_none())
         .expect("one key is spilled");
 
-    // Filler keys all in the stripe just before the spilled key's, so an
-    // eviction pass started at a filler's stripe always finds an older
-    // filler to evict and never reaches the overwritten key.
+    // Filler keys all in the stripe just before the spilled key's, so each
+    // filler's eviction pass starts there and hands off the older filler.
+    // The pass's random probe or scan can still reach the overwritten key;
+    // `settle_resident` writes it back.
     let bucket = |k: u32| usize::from(bucket_of(&key_bytes(&k)));
     let before = (bucket(spilled) + BUCKET_COUNT - 1) % BUCKET_COUNT;
     let mut fillers = (1000u32..).filter(|k| bucket(*k) == before);
@@ -1477,41 +1478,13 @@ async fn a_present_key_never_reads_as_a_miss_when_a_read_races_its_promotion() {
         .await
         .expect("overwrite");
     // ... and its old region rotates out under filler writes.
-    for n in 0..80 {
+    for _ in 0..80 {
         let k = fillers.next().expect("endless");
         shard.insert(k, "x".repeat(800)).await.expect("filler");
-        // A filler's eviction pass can sample past its own stripe and spill
-        // the key; writing it again keeps it present and resident, which is
-        // all the race needs.
-        if shard.get_sync(&spilled).is_none() {
-            shard
-                .insert(spilled, "new".to_string())
-                .await
-                .expect("rewrite");
-        }
-        assert_eq!(
-            shard.get_sync(&spilled),
-            Some("new".to_string()),
-            "setup: key is resident at filler {n}"
-        );
+        // The key stays present and resident throughout, which is all the
+        // race needs.
+        settle_resident(&shard, spilled, "new").await;
     }
-    assert!(
-        poll_until(POLL_TIMEOUT, || shard.engine.debug_pending_spill_weight()
-            == 0)
-        .await,
-        "fillers settle"
-    );
-    if shard.get_sync(&spilled).is_none() {
-        shard
-            .insert(spilled, "new".to_string())
-            .await
-            .expect("rewrite");
-    }
-    assert_eq!(
-        shard.get_sync(&spilled),
-        Some("new".to_string()),
-        "setup: key is resident"
-    );
     drop(hold);
 
     let got = tokio::time::timeout(Duration::from_secs(5), &mut get_fut)
@@ -1578,9 +1551,10 @@ async fn a_batched_load_of_a_present_key_never_calls_the_loader_when_its_read_ra
         .find(|k| shard.get_sync(k).is_none())
         .expect("one key is spilled");
 
-    // Filler keys all in the stripe just before the spilled key's, so an
-    // eviction pass started at a filler's stripe always finds an older
-    // filler to evict and never reaches the overwritten key.
+    // Filler keys all in the stripe just before the spilled key's, so each
+    // filler's eviction pass starts there and hands off the older filler.
+    // The pass's random probe or scan can still reach the overwritten key;
+    // `settle_resident` writes it back.
     let bucket = |k: u32| usize::from(bucket_of(&key_bytes(&k)));
     let before = (bucket(spilled) + BUCKET_COUNT - 1) % BUCKET_COUNT;
     let mut fillers = (1000u32..).filter(|k| bucket(*k) == before);
@@ -1611,41 +1585,13 @@ async fn a_batched_load_of_a_present_key_never_calls_the_loader_when_its_read_ra
         .insert(spilled, "new".to_string())
         .await
         .expect("overwrite");
-    for n in 0..80 {
+    for _ in 0..80 {
         let k = fillers.next().expect("endless");
         shard.insert(k, "x".repeat(800)).await.expect("filler");
-        // A filler's eviction pass can sample past its own stripe and spill
-        // the key; writing it again keeps it present and resident, which is
-        // all the race needs.
-        if shard.get_sync(&spilled).is_none() {
-            shard
-                .insert(spilled, "new".to_string())
-                .await
-                .expect("rewrite");
-        }
-        assert_eq!(
-            shard.get_sync(&spilled),
-            Some("new".to_string()),
-            "setup: key is resident at filler {n}"
-        );
+        // The key stays present and resident throughout, which is all the
+        // race needs.
+        settle_resident(&shard, spilled, "new").await;
     }
-    assert!(
-        poll_until(POLL_TIMEOUT, || shard.engine.debug_pending_spill_weight()
-            == 0)
-        .await,
-        "fillers settle"
-    );
-    if shard.get_sync(&spilled).is_none() {
-        shard
-            .insert(spilled, "new".to_string())
-            .await
-            .expect("rewrite");
-    }
-    assert_eq!(
-        shard.get_sync(&spilled),
-        Some("new".to_string()),
-        "setup: key is resident"
-    );
     drop(hold);
 
     let found = tokio::time::timeout(Duration::from_secs(5), &mut claiming)

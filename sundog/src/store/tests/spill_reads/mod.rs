@@ -50,6 +50,31 @@ async fn hold_spill_reads(shard: &Shard<u32, String>) -> tokio::sync::OwnedSemap
         .expect("the read semaphore is open")
 }
 
+/// Leaves `key` resident with `value` and no spill hand-off in flight, so
+/// only this thread's next write changes what `get_sync` answers for it.
+/// A key handed to the spill tier reads through `get_sync` until the
+/// flusher installs it, so the check waits for every hand-off to settle
+/// first. A write's eviction pass hands off the key it wrote once its scan
+/// finds nothing else to evict, so a rewrite is checked the same way.
+async fn settle_resident(shard: &Shard<u32, String>, key: u32, value: &str) {
+    for _ in 0..100 {
+        assert!(
+            poll_until(POLL_TIMEOUT, || shard.engine.debug_pending_spill_weight()
+                == 0)
+            .await,
+            "hand-offs settle"
+        );
+        match shard.get_sync(&key) {
+            Some(read) => {
+                assert_eq!(read, value, "key {key} holds its last write");
+                return;
+            }
+            None => shard.insert(key, value.to_string()).await.expect("rewrite"),
+        }
+    }
+    panic!("key {key} never stayed resident across 100 rewrites");
+}
+
 /// A `Mode::Local` shard with a real spill tier attached, under
 /// `max_capacity`. Returns the shard and its scratch directory,
 /// cleaned up by the caller.
